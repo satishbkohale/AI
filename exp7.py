@@ -1,10 +1,11 @@
 # Experiment 7 - TSP using A* (f = g + h, h = MST-based admissible heuristic)
 # INPUT (in the window): number of cities = 12 -> click "Generate Cities" -> "Solve TSP"
 # (Cities are random in 0..100 x 0..100. Allowed range: 2 to MAX_CITIES = 12.)
-import heapq, math, random
+import heapq, math, random, time, threading
 import tkinter as tk
 from tkinter import messagebox
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 def dist(a, b):
     return math.hypot(a[0] - b[0], a[1] - b[1])
@@ -79,46 +80,97 @@ def a_star_tsp(cities):
                 heapq.heappush(open_list, (ng + h, counter, ng, nxt, path + [nxt], False))
     return None, None
 
-def plot_path(cities, path, total_cost):
-    x, y = zip(*cities)
-    plt.figure()
-    plt.plot(x, y, 'o', color='blue')
-    for i in range(len(path) - 1):
-        a, b = cities[path[i]], cities[path[i + 1]]
-        plt.plot([a[0], b[0]], [a[1], b[1]], 'r-')
-    plt.title(f'TSP Solution - Total Distance: {total_cost:.2f}')
-    plt.xlabel("X Coordinates"); plt.ylabel("Y Coordinates")
-    plt.show()
 
-def generate_cities():
-    try:
-        n = int(city_count_entry.get())
-        if n < 2 or n > MAX_CITIES:
-            raise ValueError(f"Please enter a number from 2 to {MAX_CITIES}.")
-        cities.clear()
-        cities.extend((random.randint(0, 100), random.randint(0, 100)) for _ in range(n))
-        messagebox.showinfo("Success", f"{n} cities generated.")
-    except ValueError as e:
-        messagebox.showerror("Invalid Input", str(e))
+class App:
+    def __init__(self,root):
+        self.root=root;root.title('Experiment 7 - TSP using A*');root.geometry('850x670')
+        self.cities=[];self.busy=False
+        controls=tk.Frame(root);controls.pack(pady=7)
+        tk.Label(controls,text='Number of cities (2-12):').pack(side='left')
+        self.count=tk.Entry(controls,width=5);self.count.insert(0,'5');self.count.pack(side='left',padx=5)
+        tk.Button(controls,text='Create Input Fields',command=self.make_fields).pack(side='left',padx=3)
+        tk.Button(controls,text='Random Cities',command=self.random_cities).pack(side='left',padx=3)
+        self.solve_button=tk.Button(controls,text='Solve TSP',command=self.solve);self.solve_button.pack(side='left',padx=3)
+        tk.Button(controls,text='Reset',command=self.reset).pack(side='left',padx=3)
+        tk.Button(controls,text='Exit',command=root.destroy).pack(side='left',padx=3)
+        self.field_frame=tk.Frame(root);self.field_frame.pack(pady=5)
+        self.fields=[]
+        self.result=tk.Label(root,text='Enter city coordinates or generate random cities',wraplength=820)
+        self.result.pack(pady=5)
+        self.fig=Figure(figsize=(7,4.4));self.ax=self.fig.add_subplot(111)
+        self.canvas=FigureCanvasTkAgg(self.fig,master=root);self.canvas.get_tk_widget().pack(fill='both',expand=True,padx=10,pady=5)
+        self.make_fields()
+    def city_count(self):
+        try:n=int(self.count.get())
+        except ValueError:raise ValueError('Enter a whole number of cities.')
+        if not 2<=n<=MAX_CITIES:raise ValueError(f'City count must be 2-{MAX_CITIES}.')
+        return n
+    def make_fields(self):
+        try:n=self.city_count()
+        except ValueError as exc:messagebox.showerror('Input error',str(exc));return
+        for child in self.field_frame.winfo_children():child.destroy()
+        self.fields=[];self.cities=[]
+        for i in range(n):
+            row,col=divmod(i,4)
+            group=tk.Frame(self.field_frame);group.grid(row=row,column=col,padx=8,pady=3)
+            tk.Label(group,text=f'City {i}:').pack(side='left')
+            x=tk.Entry(group,width=5);x.pack(side='left',padx=2)
+            y=tk.Entry(group,width=5);y.pack(side='left',padx=2)
+            self.fields.append((x,y))
+        self.clear_plot();self.result.config(text='Enter X and Y for each city, then click Solve TSP.')
+    def read_cities(self):
+        if len(self.fields)!=self.city_count():raise ValueError('Click Create Input Fields after changing city count.')
+        try:points=[(float(x.get()),float(y.get())) for x,y in self.fields]
+        except ValueError:raise ValueError('Enter valid numeric X and Y coordinates for every city.')
+        if any(not math.isfinite(v) for point in points for v in point):raise ValueError('Coordinates must be finite numbers.')
+        return points
+    def random_cities(self):
+        try:
+            if len(self.fields)!=self.city_count():self.make_fields()
+            for x,y in self.fields:
+                x.delete(0,'end');x.insert(0,str(random.randint(0,100)))
+                y.delete(0,'end');y.insert(0,str(random.randint(0,100)))
+            self.cities=self.read_cities();self.plot(self.cities)
+            self.result.config(text=f'{len(self.cities)} random cities generated. Click Solve TSP.')
+        except ValueError as exc:messagebox.showerror('Input error',str(exc))
+    def clear_plot(self):
+        self.ax.clear();self.ax.set_xlabel('X');self.ax.set_ylabel('Y');self.canvas.draw()
+    def plot(self,cities,path=None,total=None):
+        self.ax.clear()
+        for i,(x,y) in enumerate(cities):
+            self.ax.scatter(x,y,c='green' if i==0 else 'blue',s=55)
+            self.ax.annotate(str(i),(x,y),xytext=(5,5),textcoords='offset points')
+        if path:
+            for a,b in zip(path,path[1:]):
+                p,q=cities[a],cities[b]
+                self.ax.plot([p[0],q[0]],[p[1],q[1]],'r-',linewidth=2)
+        self.ax.set_title('TSP route' + (f' - Distance: {total:.2f}' if total is not None else ''))
+        self.ax.set_xlabel('X');self.ax.set_ylabel('Y');self.ax.grid(alpha=.25);self.canvas.draw()
+    def solve(self):
+        if self.busy:return
+        try:self.cities=self.read_cities()
+        except ValueError as exc:messagebox.showerror('Input error',str(exc));return
+        self.busy=True;self.solve_button.config(state='disabled');self.result.config(text='Solving, please wait...')
+        points=list(self.cities)
+        def worker():
+            begin=time.perf_counter()
+            try:answer=a_star_tsp(points);error=None
+            except Exception as exc:answer=None;error=str(exc)
+            elapsed=time.perf_counter()-begin
+            self.root.after(0,lambda:self.finished(points,answer,elapsed,error))
+        threading.Thread(target=worker,daemon=True).start()
+    def finished(self,points,answer,elapsed,error):
+        self.busy=False;self.solve_button.config(state='normal')
+        if error:messagebox.showerror('Error',error);self.result.config(text=error);return
+        path,total=answer
+        if path:
+            self.plot(points,path,total)
+            self.result.config(text=f'Tour: {" → ".join(map(str,path))} | Distance: {total:.2f} | Time: {elapsed:.3f}s')
+        else:self.result.config(text='No solution found')
+    def reset(self):
+        if self.busy:
+            messagebox.showinfo('Busy','Wait for the current search to finish.');return
+        self.make_fields()
 
-def solve_tsp():
-    if len(cities) < 2:
-        messagebox.showerror("Error", "Generate cities first!")
-        return
-    path, total = a_star_tsp(cities)
-    if path:
-        print("Tour:", path, "Distance:", round(total, 2))
-        plot_path(cities, path, total)
-    else:
-        messagebox.showerror("Error", "No solution found.")
-
-cities = []
-if __name__ == "__main__":
-    root = tk.Tk()
-    root.title("Traveling Salesman Problem Solver")
-    tk.Label(root, text="Enter number of cities:").pack()
-    city_count_entry = tk.Entry(root)
-    city_count_entry.pack()
-    tk.Button(root, text="Generate Cities", command=generate_cities).pack()
-    tk.Button(root, text="Solve TSP", command=solve_tsp).pack()
-    root.mainloop()
+if __name__=='__main__':
+    root=tk.Tk();App(root);root.mainloop()
